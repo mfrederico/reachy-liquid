@@ -48,14 +48,38 @@ VOICE_PRESETS = {
 # Default voice preset
 VOICE_PRESET = "professional"
 
-# System prompt template - includes voice description
-def get_system_prompt(voice_preset: str = None) -> str:
-    """Generate system prompt with voice description."""
+# System prompt template - includes voice description and capabilities
+def get_system_prompt(voice_preset: str = None, has_camera: bool = False, has_tools: bool = False) -> str:
+    """Generate system prompt with voice description and capabilities.
+
+    Args:
+        voice_preset: Voice style to use
+        has_camera: Whether PTZ camera is available
+        has_tools: Whether keyword tools are enabled
+    """
     preset = voice_preset or VOICE_PRESET
     voice_desc = VOICE_PRESETS.get(preset, VOICE_PRESETS["default"])
-    return f"""Respond with interleaved text and audio.
+
+    base_prompt = f"""Respond with interleaved text and audio.
 Use the following voice: {voice_desc}
-You are a friendly robot companion. Keep responses concise."""
+You are Liquid Lili, a friendly robot companion. Keep responses concise and natural."""
+
+    capabilities = []
+
+    if has_tools:
+        capabilities.append("You can tell the current time and date. When SYSTEM INFO provides time/date, state it in your response.")
+
+    if has_camera:
+        capabilities.append("You have a camera with PTZ (pan-tilt-zoom) controls. When SYSTEM INFO says you looked somewhere, confirm you moved the camera. You CAN physically look around.")
+
+    # Add general instruction about SYSTEM INFO
+    if has_tools or has_camera:
+        capabilities.append("IMPORTANT: When you see 'SYSTEM INFO:', that information is REAL and comes from your tools. Always include it in your response.")
+
+    if capabilities:
+        base_prompt += "\n\nYour capabilities:\n- " + "\n- ".join(capabilities)
+
+    return base_prompt
 
 # Legacy system prompt (for compatibility)
 SYSTEM_PROMPT = get_system_prompt()

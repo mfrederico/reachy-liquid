@@ -1,7 +1,7 @@
 """Audio playback for LFM2-Audio output."""
 
-import queue
 import threading
+import time
 import numpy as np
 import sounddevice as sd
 import torch
@@ -10,115 +10,223 @@ import config
 
 
 class AudioPlayer:
-    """Plays audio from LFM2-Audio model output with streaming support."""
+    """Low-latency streaming audio player with robust buffering.
 
-    def __init__(self):
-        self.sample_rate = config.OUTPUT_SAMPLE_RATE
-        self._stream = None
-        self._queue = None
-        self._finished = None
+    Uses a large circular buffer and a PERSISTENT audio stream to avoid
+    repeated open/close cycles that cause PipeWire/Wireplumber issues.
+    """
 
-    def play(self, audio: np.ndarray | torch.Tensor, blocking: bool = True):
-        """
-        Play complete audio through speakers.
+    def __init__(self, prebuffer_seconds: float = 0.8, buffer_seconds: float = 10.0):
+        """Initialize audio player.
 
         Args:
-            audio: Audio waveform (numpy array or torch tensor)
-            blocking: If True, wait for playback to complete
+            prebuffer_seconds: Seconds of audio to buffer before starting playback
+            buffer_seconds: Total buffer capacity in seconds
         """
-        if isinstance(audio, torch.Tensor):
-            audio = audio.cpu().numpy()
+        self.sample_rate = config.OUTPUT_SAMPLE_RATE
+        self.prebuffer_samples = int(self.sample_rate * prebuffer_seconds)
+        self.buffer_size = int(self.sample_rate * buffer_seconds)
 
-        if audio.ndim > 1:
-            audio = audio.squeeze()
+        # Circular buffer (pre-allocated for performance)
+        self._buffer = np.zeros(self.buffer_size, dtype=np.float32)
+        self._write_pos = 0
+        self._read_pos = 0
+        self._samples_available = 0
+        self._lock = threading.Lock()
 
+        # State
+        self._stream = None
+        self._streaming_active = False  # Whether we're actively playing a response
+        self._total_written = 0
+
+        # Create persistent stream on init
+        self._init_stream()
+
+    def _normalize(self, audio: np.ndarray) -> np.ndarray:
+        """Normalize audio to prevent clipping."""
         max_val = np.abs(audio).max()
         if max_val > 1.0:
             audio = audio / max_val
+        return audio.astype(np.float32)
 
-        print(f"Playing response ({len(audio) / self.sample_rate:.2f}s)...")
-        sd.play(audio, self.sample_rate)
-
-        if blocking:
-            sd.wait()
-            print("Done.")
-
-    def start_stream(self):
-        """Start streaming audio playback."""
-        self._queue = queue.Queue()
-        self._finished = threading.Event()
-
-        def callback(outdata, frames, time, status):
-            try:
-                data = self._queue.get_nowait()
-                # Pad if chunk is smaller than requested frames
-                if len(data) < frames:
-                    outdata[:len(data), 0] = data
-                    outdata[len(data):, 0] = 0
-                else:
-                    outdata[:, 0] = data[:frames]
-            except queue.Empty:
-                if self._finished.is_set():
-                    raise sd.CallbackStop()
-                outdata.fill(0)
-
+    def _init_stream(self):
+        """Initialize persistent audio stream (called once at startup)."""
         self._stream = sd.OutputStream(
             samplerate=self.sample_rate,
             channels=1,
-            callback=callback,
-            blocksize=1920,  # Match mimi chunk size (80ms at 24kHz)
+            callback=self._audio_callback,
+            blocksize=1024,
+            latency='low',
         )
         self._stream.start()
 
+    def play(self, audio: np.ndarray | torch.Tensor, blocking: bool = True):
+        """Play complete audio (non-streaming)."""
+        if isinstance(audio, torch.Tensor):
+            audio = audio.cpu().numpy()
+        if audio.ndim > 1:
+            audio = audio.squeeze()
+        audio = self._normalize(audio)
+        sd.play(audio, self.sample_rate)
+        if blocking:
+            sd.wait()
+
+    def start_stream(self):
+        """Prepare for streaming playback (resets buffer, stream stays open)."""
+        with self._lock:
+            self._buffer.fill(0)
+            self._write_pos = 0
+            self._read_pos = 0
+            self._samples_available = 0
+        self._streaming_active = False  # Will be set True after prebuffer
+        self._total_written = 0
+
+    def _audio_callback(self, outdata, frames, time_info, status):
+        """Audio output callback - reads from circular buffer using fast numpy ops.
+
+        Stream is always running; outputs silence when not actively streaming.
+        """
+        with self._lock:
+            available = self._samples_available
+
+            if available >= frames:
+                # Fast numpy read from circular buffer
+                end_pos = self._read_pos + frames
+                if end_pos <= self.buffer_size:
+                    # Contiguous read
+                    outdata[:, 0] = self._buffer[self._read_pos:end_pos]
+                else:
+                    # Wrap-around read
+                    first_part = self.buffer_size - self._read_pos
+                    outdata[:first_part, 0] = self._buffer[self._read_pos:]
+                    outdata[first_part:, 0] = self._buffer[:frames - first_part]
+                self._read_pos = end_pos % self.buffer_size
+                self._samples_available -= frames
+            elif available > 0:
+                # Partial read with numpy
+                end_pos = self._read_pos + available
+                if end_pos <= self.buffer_size:
+                    outdata[:available, 0] = self._buffer[self._read_pos:end_pos]
+                else:
+                    first_part = self.buffer_size - self._read_pos
+                    outdata[:first_part, 0] = self._buffer[self._read_pos:]
+                    outdata[first_part:available, 0] = self._buffer[:available - first_part]
+                outdata[available:, 0] = 0
+                self._read_pos = end_pos % self.buffer_size
+                self._samples_available = 0
+            else:
+                # Buffer empty - output silence (don't stop, stream is persistent)
+                outdata.fill(0)
+
     def play_chunk(self, chunk: np.ndarray | torch.Tensor):
-        """
-        Queue an audio chunk for streaming playback.
-
-        Args:
-            chunk: Audio chunk (numpy array or torch tensor)
-        """
-        if self._queue is None:
-            self.start_stream()
-
+        """Add a chunk to the buffer for streaming playback."""
         if isinstance(chunk, torch.Tensor):
             chunk = chunk.cpu().numpy()
-
         if chunk.ndim > 1:
             chunk = chunk.squeeze()
 
-        # Normalize chunk
-        max_val = np.abs(chunk).max()
-        if max_val > 1.0:
-            chunk = chunk / max_val
+        chunk = self._normalize(chunk)
 
-        self._queue.put(chunk.astype(np.float32))
+        # Write to circular buffer using fast numpy ops
+        with self._lock:
+            chunk_len = len(chunk)
+
+            # Check for buffer overflow
+            if self._samples_available + chunk_len > self.buffer_size:
+                print("[Audio] Buffer overflow, dropping old samples")
+                # Skip oldest samples
+                skip = (self._samples_available + chunk_len) - self.buffer_size
+                self._read_pos = (self._read_pos + skip) % self.buffer_size
+                self._samples_available -= skip
+
+            # Fast numpy write to circular buffer
+            end_pos = self._write_pos + chunk_len
+            if end_pos <= self.buffer_size:
+                # Contiguous write
+                self._buffer[self._write_pos:end_pos] = chunk
+            else:
+                # Wrap-around write
+                first_part = self.buffer_size - self._write_pos
+                self._buffer[self._write_pos:] = chunk[:first_part]
+                self._buffer[:chunk_len - first_part] = chunk[first_part:]
+            self._write_pos = end_pos % self.buffer_size
+            self._samples_available += chunk_len
+            self._total_written += chunk_len
+
+        # Mark as actively streaming once we have enough buffered
+        if not self._streaming_active and self._samples_available >= self.prebuffer_samples:
+            self._streaming_active = True
 
     def finish_stream(self):
-        """Signal that no more chunks will be added and wait for playback to finish."""
-        if self._finished is None:
-            return
+        """Wait for playback to complete (stream stays open for next response)."""
+        # Wait for buffer to drain
+        while self._samples_available > 0:
+            time.sleep(0.05)
 
-        self._finished.set()
+        # Let last samples play out
+        time.sleep(0.1)
 
-        # Wait for queue to drain
-        while not self._queue.empty():
-            sd.sleep(50)
-
-        # Small delay to ensure last chunk plays
-        sd.sleep(100)
-
-        if self._stream:
-            self._stream.stop()
-            self._stream.close()
-            self._stream = None
-
-        self._queue = None
-        self._finished = None
+        self._streaming_active = False
 
     def stop(self):
-        """Stop any currently playing audio."""
+        """Stop playback immediately (stream stays open)."""
+        with self._lock:
+            self._samples_available = 0
+            self._write_pos = 0
+            self._read_pos = 0
+        self._streaming_active = False
+
+    def close(self):
+        """Close the persistent stream (call on shutdown)."""
         if self._stream:
-            self._stream.stop()
-            self._stream.close()
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception:
+                pass
             self._stream = None
+
+
+class BufferedAudioPlayer:
+    """Collects all audio first, then plays (guaranteed smooth, higher latency)."""
+
+    def __init__(self):
+        self.sample_rate = config.OUTPUT_SAMPLE_RATE
+        self._chunks = []
+
+    def play(self, audio, blocking=True):
+        if isinstance(audio, torch.Tensor):
+            audio = audio.cpu().numpy()
+        if audio.ndim > 1:
+            audio = audio.squeeze()
+        max_val = np.abs(audio).max()
+        if max_val > 1.0:
+            audio = audio / max_val
+        sd.play(audio.astype(np.float32), self.sample_rate)
+        if blocking:
+            sd.wait()
+
+    def start_stream(self):
+        self._chunks = []
+
+    def play_chunk(self, chunk):
+        if isinstance(chunk, torch.Tensor):
+            chunk = chunk.cpu().numpy()
+        if chunk.ndim > 1:
+            chunk = chunk.squeeze()
+        self._chunks.append(chunk.astype(np.float32))
+
+    def finish_stream(self):
+        if not self._chunks:
+            return
+        full_audio = np.concatenate(self._chunks)
+        max_val = np.abs(full_audio).max()
+        if max_val > 1.0:
+            full_audio = full_audio / max_val
+        sd.play(full_audio, self.sample_rate)
+        sd.wait()
+        self._chunks = []
+
+    def stop(self):
         sd.stop()
+        self._chunks = []

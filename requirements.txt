@@ -15,5 +15,12 @@ numpy
 ultralytics
 opencv-python
 
+# System monitoring
+psutil
+
+# Optional: Whisper for transcription (needed for --tools=keywords)
+# pip install openai-whisper
+# openai-whisper
+
 # Optional: GPU acceleration (skip on Raspberry Pi)
 # flash-attn
