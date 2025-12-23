@@ -104,10 +104,10 @@ class PiperTTS:
 
     def _synthesize_api(self, text: str) -> np.ndarray:
         """Synthesize using Python API."""
-        # Collect raw audio bytes from synthesize_stream_raw
+        # Collect raw audio bytes from synthesize (returns AudioChunk objects)
         audio_bytes = b""
-        for chunk in self._voice.synthesize_stream_raw(text):
-            audio_bytes += chunk
+        for chunk in self._voice.synthesize(text):
+            audio_bytes += chunk.audio_int16_bytes
 
         if not audio_bytes:
             print("[TTS] Warning: No audio generated")
