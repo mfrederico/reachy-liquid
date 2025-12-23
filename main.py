@@ -317,57 +317,70 @@ def main():
             chunk_count = 0
             interrupted = False
 
+            # Multi-threaded barge-in: background thread monitors mic continuously
+            import time as time_module
+            import threading
+
+            barge_in_event = threading.Event()
+
+            def barge_in_monitor():
+                """Background thread that continuously monitors for barge-in."""
+                while not barge_in_event.is_set():
+                    if transcriber and recorder.check_barge_in_with_transcription(transcriber):
+                        barge_in_event.set()
+                        player.stop()  # Immediately stop playback from monitor thread
+                        break
+                    elif not transcriber and recorder.check_barge_in():
+                        barge_in_event.set()
+                        player.stop()
+                        break
+                    time_module.sleep(0.01)  # Check every 10ms
+
+            # Start background barge-in monitor
+            monitor_thread = threading.Thread(target=barge_in_monitor, daemon=True)
+            monitor_thread.start()
+
             if args.lite:
                 # Lite mode yields complete sentence audio arrays
-                # Play each sentence with proper pacing and word-based barge-in
-                import time
                 chunk_size = int(config.SAMPLE_RATE * 0.1)  # 100ms chunks
 
                 for sentence_audio in conversation.generate_response_streaming(audio_input, user_text=user_text):
+                    if barge_in_event.is_set():
+                        print("\n[Interrupted - words detected]")
+                        interrupted = True
+                        break
+
                     # Play this sentence in chunks at real-time rate
                     for i in range(0, len(sentence_audio), chunk_size):
+                        if barge_in_event.is_set():
+                            print("\n[Interrupted - words detected]")
+                            interrupted = True
+                            break
+
                         chunk = sentence_audio[i:i + chunk_size]
                         player.play_chunk(chunk)
                         chunk_count += 1
 
-                        # Check for word-based barge-in (uses transcriber to confirm real speech)
-                        if transcriber and recorder.check_barge_in_with_transcription(transcriber):
-                            print("\n[Interrupted - words detected]")
-                            player.stop()  # Force stop playback immediately
-                            interrupted = True
-                            break
-
                         # Pace playback to prevent buffer overflow
-                        time.sleep(0.05)
-
-                        if interrupted:
-                            break
+                        time_module.sleep(0.05)
 
                     if interrupted:
                         break
             else:
                 # LFM2-Audio mode yields small chunks directly
                 # Note: LFM2-Audio does its own speech recognition, doesn't use user_text
-                import time as time_module
                 for audio_chunk in conversation.generate_response_streaming(audio_input):
+                    if barge_in_event.is_set():
+                        print("\n[Interrupted - words detected]")
+                        interrupted = True
+                        break
+
                     player.play_chunk(audio_chunk)
                     chunk_count += 1
 
-                    # Check for word-based barge-in (uses transcriber to confirm real speech)
-                    if transcriber and recorder.check_barge_in_with_transcription(transcriber):
-                        print("\n[Interrupted - words detected]")
-                        player.stop()  # Force stop playback immediately
-                        interrupted = True
-                        break
-                    elif not transcriber and recorder.check_barge_in():
-                        # Fallback to VAD-only if no transcriber
-                        print("\n[Interrupted]")
-                        player.stop()
-                        interrupted = True
-                        break
-
-                    # Small delay to allow async transcription to complete
-                    time_module.sleep(0.02)  # 20ms
+            # Signal monitor thread to stop and wait for it
+            barge_in_event.set()
+            monitor_thread.join(timeout=0.5)
 
             # Stop monitoring
             barge_in = recorder.stop_barge_in_monitor()
