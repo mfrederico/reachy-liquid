@@ -81,7 +81,12 @@ class PiperTTS:
             )
 
         self._voice = PiperVoice.load(str(model_path), str(config_path))
-        print(f"Loaded Piper voice: {self.model_name}")
+
+        # Get actual sample rate from model config
+        if hasattr(self._voice, 'config') and hasattr(self._voice.config, 'sample_rate'):
+            self.sample_rate = self._voice.config.sample_rate
+
+        print(f"Loaded Piper voice: {self.model_name} ({self.sample_rate} Hz)")
 
     def synthesize(self, text: str) -> np.ndarray:
         """Synthesize speech from text.
@@ -99,23 +104,18 @@ class PiperTTS:
 
     def _synthesize_api(self, text: str) -> np.ndarray:
         """Synthesize using Python API."""
-        # Create in-memory WAV file
-        wav_buffer = io.BytesIO()
+        # Collect raw audio bytes from synthesize_stream_raw
+        audio_bytes = b""
+        for chunk in self._voice.synthesize_stream_raw(text):
+            audio_bytes += chunk
 
-        with wave.open(wav_buffer, 'wb') as wav_file:
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)  # 16-bit
-            wav_file.setframerate(self.sample_rate)
+        if not audio_bytes:
+            print("[TTS] Warning: No audio generated")
+            return np.array([], dtype=np.float32)
 
-            # Synthesize
-            self._voice.synthesize(text, wav_file)
-
-        # Read back and convert to float32
-        wav_buffer.seek(0)
-        with wave.open(wav_buffer, 'rb') as wav_file:
-            frames = wav_file.readframes(wav_file.getnframes())
-            audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32)
-            audio /= 32768.0  # Normalize to [-1, 1]
+        # Parse raw 16-bit PCM
+        audio = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
+        audio /= 32768.0  # Normalize to [-1, 1]
 
         return audio
 
@@ -180,6 +180,10 @@ class PiperTTS:
         Returns:
             Resampled audio
         """
+        # Handle empty audio
+        if len(audio) == 0:
+            return audio
+
         if target_rate == self.sample_rate:
             return audio
 
