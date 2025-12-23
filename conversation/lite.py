@@ -168,12 +168,12 @@ class LiteConversationManager:
         """
         sample_rate = sample_rate or config.SAMPLE_RATE
 
-        # Step 1: Transcribe if needed
+        # Step 1: Transcribe if needed (only if not already provided)
         if user_text is None:
             self._ensure_transcriber()
             user_text = self._transcriber.transcribe(audio_input, sample_rate)
             if user_text:
-                print(f"You: {user_text}")
+                print(f"You: {user_text}")  # Only print if we did the transcription
 
         if not user_text or not user_text.strip():
             return

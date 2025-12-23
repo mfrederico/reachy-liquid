@@ -128,13 +128,14 @@ def main():
     player = AudioPlayer(prebuffer_seconds=args.prebuffer)
 
     # Transcriber (for showing what user said, and/or keyword tools)
+    # Lite mode needs transcription for both display and keyword tools
     transcriber = None
-    if args.transcribe or args.tools == "keywords":
+    if args.transcribe or args.tools == "keywords" or args.lite:
         from audio import create_transcriber
         transcriber = create_transcriber(
             enabled=True,
             model_size=args.whisper,
-            device=config.DEVICE,
+            device="cpu" if args.lite else config.DEVICE,  # Lite mode uses CPU
         )
 
     # Vision (optional) - initialize before conversation so we can pass camera to tools
@@ -280,9 +281,9 @@ def main():
                         print(f"[Tool: {action}]")
 
             # Pass tool results to conversation so LLM knows about them
-            # Use pre_speak=True for keywords (guaranteed output), False for LLM tools
+            # Use pre_speak=True for keywords/lite (guaranteed output), False for LLM tools
             if tool_results:
-                use_pre_speak = (args.tools == "keywords")
+                use_pre_speak = (args.tools == "keywords") or args.lite
                 conversation.add_tool_context(tool_results, pre_speak=use_pre_speak)
 
             # Generate and stream response with barge-in detection
