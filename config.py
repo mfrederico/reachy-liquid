@@ -35,5 +35,27 @@ MAX_NEW_TOKENS = 512
 AUDIO_TEMPERATURE = 1.0
 AUDIO_TOP_K = 4
 
-# System prompt - must instruct model to respond with audio
-SYSTEM_PROMPT = """Respond with interleaved text and audio. You are a friendly robot companion. Keep responses concise."""
+# Voice presets - natural language descriptions for LFM2-Audio voice customization
+VOICE_PRESETS = {
+    "default": "A friendly, clear voice with a warm tone.",
+    "professional": "A male speaker with a calm, professional tone and clear enunciation.",
+    "friendly": "A cheerful, upbeat voice with an animated and warm tone.",
+    "calm": "A soft, soothing voice with a relaxed pace and gentle tone.",
+    "robot": "A slightly robotic, neutral voice with precise articulation.",
+    "energetic": "An enthusiastic, high-energy voice with dynamic intonation.",
+}
+
+# Default voice preset
+VOICE_PRESET = "professional"
+
+# System prompt template - includes voice description
+def get_system_prompt(voice_preset: str = None) -> str:
+    """Generate system prompt with voice description."""
+    preset = voice_preset or VOICE_PRESET
+    voice_desc = VOICE_PRESETS.get(preset, VOICE_PRESETS["default"])
+    return f"""Respond with interleaved text and audio.
+Use the following voice: {voice_desc}
+You are a friendly robot companion. Keep responses concise."""
+
+# Legacy system prompt (for compatibility)
+SYSTEM_PROMPT = get_system_prompt()

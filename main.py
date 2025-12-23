@@ -23,9 +23,11 @@ def main():
         help="Disable vision/camera",
     )
     parser.add_argument(
-        "--no-audio",
-        action="store_true",
-        help="Run in text-only mode (for testing)",
+        "--voice",
+        type=str,
+        default=config.VOICE_PRESET,
+        choices=list(config.VOICE_PRESETS.keys()),
+        help=f"Voice preset (default: {config.VOICE_PRESET})",
     )
     args = parser.parse_args()
 
@@ -33,6 +35,7 @@ def main():
     print("  Liquid Reachy - AI Companion")
     print("=" * 50)
     print(f"Device: {config.DEVICE}")
+    print(f"Voice: {args.voice}")
     print()
 
     # Import components (deferred to show startup progress)
@@ -46,8 +49,9 @@ def main():
     recorder = AudioRecorder()
     player = AudioPlayer()
 
-    # Conversation (loads model)
-    conversation = ConversationManager()
+    # Conversation (loads model with selected voice)
+    system_prompt = config.get_system_prompt(args.voice)
+    conversation = ConversationManager(system_prompt=system_prompt)
 
     # Vision (optional)
     camera = None
