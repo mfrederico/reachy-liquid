@@ -1,0 +1,19 @@
+# Core
+torch>=2.0
+torchaudio
+
+# Audio - LFM2 model
+liquid-audio
+
+# Audio I/O
+sounddevice
+numpy
+
+# VAD - Silero VAD loaded via torch.hub (no pip package needed)
+
+# Vision
+ultralytics
+opencv-python
+
+# Optional: GPU acceleration (skip on Raspberry Pi)
+# flash-attn
