@@ -129,13 +129,15 @@ def main():
 
     # Transcriber (for showing what user said, and/or keyword tools)
     # Lite mode needs transcription for both display and keyword tools
+    # IMPORTANT: Always use CPU for Whisper to avoid CUDA conflicts with LFM2-Audio
+    # LFM2-Audio uses CUDA graph capture which doesn't work with concurrent GPU access
     transcriber = None
     if args.transcribe or args.tools == "keywords" or args.lite:
         from audio import create_transcriber
         transcriber = create_transcriber(
             enabled=True,
             model_size=args.whisper,
-            device="cpu" if args.lite else config.DEVICE,  # Lite mode uses CPU
+            device="cpu",  # Always CPU - CUDA conflicts with LFM2-Audio graph capture
         )
 
     # Vision (optional) - initialize before conversation so we can pass camera to tools
