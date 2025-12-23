@@ -347,7 +347,8 @@ def main():
                         break
             else:
                 # LFM2-Audio mode yields small chunks directly
-                for audio_chunk in conversation.generate_response_streaming(audio_input, user_text=user_text):
+                # Note: LFM2-Audio does its own speech recognition, doesn't use user_text
+                for audio_chunk in conversation.generate_response_streaming(audio_input):
                     player.play_chunk(audio_chunk)
                     chunk_count += 1
 
