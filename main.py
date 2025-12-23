@@ -319,32 +319,32 @@ def main():
             chunk_count = 0
             interrupted = False
 
-            # Multi-threaded barge-in: background thread monitors mic continuously
             import time as time_module
-            import threading
 
-            barge_in_event = threading.Event()
+            if args.lite:
+                # Lite mode: Multi-threaded barge-in (safe, no CUDA)
+                import threading
+                barge_in_event = threading.Event()
 
-            def barge_in_monitor():
-                """Background thread that continuously monitors for barge-in."""
-                while not barge_in_event.is_set():
-                    if transcriber and recorder.check_barge_in_with_transcription(transcriber):
-                        barge_in_event.set()
-                        # For lite mode, safe to stop player from thread
-                        # For LFM2-Audio, let main thread handle it (CUDA safety)
-                        if args.lite:
+                def barge_in_monitor():
+                    """Background thread that continuously monitors for barge-in."""
+                    while not barge_in_event.is_set():
+                        if transcriber and recorder.check_barge_in_with_transcription(transcriber):
+                            barge_in_event.set()
                             player.stop()
-                        break
-                    elif not transcriber and recorder.check_barge_in():
-                        barge_in_event.set()
-                        if args.lite:
+                            break
+                        elif not transcriber and recorder.check_barge_in():
+                            barge_in_event.set()
                             player.stop()
-                        break
-                    time_module.sleep(0.01)  # Check every 10ms
+                            break
+                        time_module.sleep(0.01)  # Check every 10ms
 
-            # Start background barge-in monitor
-            monitor_thread = threading.Thread(target=barge_in_monitor, daemon=True)
-            monitor_thread.start()
+                monitor_thread = threading.Thread(target=barge_in_monitor, daemon=True)
+                monitor_thread.start()
+            else:
+                # LFM2-Audio mode: No background thread (CUDA graph capture is sensitive)
+                barge_in_event = None
+                monitor_thread = None
 
             if args.lite:
                 # Lite mode yields complete sentence audio arrays
@@ -373,21 +373,24 @@ def main():
                     if interrupted:
                         break
             else:
-                # LFM2-Audio mode yields small chunks directly
-                # Note: LFM2-Audio does its own speech recognition, doesn't use user_text
+                # LFM2-Audio mode: Single-threaded barge-in (CUDA graph capture sensitive)
+                # Check for barge-in inline between chunks, no background thread
                 for audio_chunk in conversation.generate_response_streaming(audio_input):
-                    if barge_in_event.is_set():
-                        print("\n[Interrupted - words detected]")
-                        player.stop()  # Stop playback from main thread (CUDA safe)
+                    # Simple VAD-based barge-in check (no Whisper - avoid GPU conflicts)
+                    if recorder.check_barge_in():
+                        print("\n[Interrupted]")
+                        player.stop()
                         interrupted = True
                         break
 
                     player.play_chunk(audio_chunk)
                     chunk_count += 1
 
-            # Signal monitor thread to stop and wait for it
-            barge_in_event.set()
-            monitor_thread.join(timeout=0.5)
+            # Cleanup for lite mode threading
+            if barge_in_event is not None:
+                barge_in_event.set()
+            if monitor_thread is not None:
+                monitor_thread.join(timeout=0.5)
 
             # Stop monitoring
             barge_in = recorder.stop_barge_in_monitor()
