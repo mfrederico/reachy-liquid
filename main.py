@@ -351,9 +351,16 @@ def main():
                     player.play_chunk(audio_chunk)
                     chunk_count += 1
 
-                    # Check for barge-in
-                    if recorder.check_barge_in():
+                    # Check for word-based barge-in (uses transcriber to confirm real speech)
+                    if transcriber and recorder.check_barge_in_with_transcription(transcriber):
+                        print("\n[Interrupted - words detected]")
+                        player.stop()  # Force stop playback immediately
+                        interrupted = True
+                        break
+                    elif not transcriber and recorder.check_barge_in():
+                        # Fallback to VAD-only if no transcriber
                         print("\n[Interrupted]")
+                        player.stop()
                         interrupted = True
                         break
 
