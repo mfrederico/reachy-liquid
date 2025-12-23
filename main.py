@@ -27,8 +27,8 @@ def main():
         "--model",
         type=str,
         default="tinyllama",
-        choices=["tinyllama", "qwen2-0.5b", "phi3-mini", "gemma-2b"],
-        help="LLM model for --lite mode (default: tinyllama)",
+        choices=["tinyllama", "qwen2-0.5b", "smollm2"],
+        help="LLM model for --lite mode (default: tinyllama). Auto-downloads if not present.",
     )
     parser.add_argument(
         "--model-path",

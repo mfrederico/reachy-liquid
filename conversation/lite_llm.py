@@ -6,6 +6,30 @@ Uses llama-cpp-python bindings for efficient CPU inference.
 from pathlib import Path
 from typing import Optional, Generator
 import os
+import urllib.request
+import sys
+
+
+def download_model(url: str, dest: Path, desc: str = "Downloading"):
+    """Download a file with progress bar.
+
+    Args:
+        url: URL to download
+        dest: Destination path
+        desc: Description for progress bar
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    def progress_hook(count, block_size, total_size):
+        percent = min(100, count * block_size * 100 // total_size)
+        mb_done = count * block_size / (1024 * 1024)
+        mb_total = total_size / (1024 * 1024)
+        sys.stdout.write(f"\r{desc}: {percent}% ({mb_done:.1f}/{mb_total:.1f} MB)")
+        sys.stdout.flush()
+
+    print(f"{desc}...")
+    urllib.request.urlretrieve(url, dest, progress_hook)
+    print()  # Newline after progress
 
 
 class LiteLLM:
@@ -19,12 +43,23 @@ class LiteLLM:
         >>> print(response)
     """
 
-    # Recommended models for Pi 5 (download from HuggingFace)
+    # Recommended models for Pi 5 with download URLs
     RECOMMENDED_MODELS = {
-        "tinyllama": "TinyLlama-1.1B-Chat-v1.0.Q4_K_M.gguf",
-        "qwen2-0.5b": "qwen2-0.5b-instruct-q4_k_m.gguf",
-        "phi3-mini": "Phi-3-mini-4k-instruct-q4.gguf",
-        "gemma-2b": "gemma-2b-it-q4_k_m.gguf",
+        "tinyllama": {
+            "file": "TinyLlama-1.1B-Chat-v1.0.Q4_K_M.gguf",
+            "url": "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+            "size_mb": 669,
+        },
+        "qwen2-0.5b": {
+            "file": "qwen2-0_5b-instruct-q4_k_m.gguf",
+            "url": "https://huggingface.co/Qwen/Qwen2-0.5B-Instruct-GGUF/resolve/main/qwen2-0_5b-instruct-q4_k_m.gguf",
+            "size_mb": 397,
+        },
+        "smollm2": {
+            "file": "smollm2-360m-instruct-q8_0.gguf",
+            "url": "https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct-GGUF/resolve/main/smollm2-360m-instruct-q8_0.gguf",
+            "size_mb": 386,
+        },
     }
 
     def __init__(
@@ -75,23 +110,36 @@ class LiteLLM:
             )
 
         # Find model path
+        models_dir = Path("models")
+
         if self._model_path:
             model_path = Path(self._model_path)
+        elif self._model_name in self.RECOMMENDED_MODELS:
+            model_info = self.RECOMMENDED_MODELS[self._model_name]
+            model_path = models_dir / model_info["file"]
+
+            # Auto-download if not exists
+            if not model_path.exists():
+                print(f"Model '{self._model_name}' not found. Downloading ({model_info['size_mb']} MB)...")
+                download_model(
+                    url=model_info["url"],
+                    dest=model_path,
+                    desc=f"Downloading {self._model_name}",
+                )
         else:
-            # Look in models/ directory
-            models_dir = Path("models")
-            if self._model_name in self.RECOMMENDED_MODELS:
-                model_path = models_dir / self.RECOMMENDED_MODELS[self._model_name]
+            # Try to find any .gguf file
+            gguf_files = list(models_dir.glob("*.gguf")) if models_dir.exists() else []
+            if gguf_files:
+                model_path = gguf_files[0]
             else:
-                # Try to find any .gguf file
-                gguf_files = list(models_dir.glob("*.gguf"))
-                if gguf_files:
-                    model_path = gguf_files[0]
-                else:
-                    raise FileNotFoundError(
-                        f"No model found. Download a model to models/ directory:\n"
-                        f"mkdir -p models && cd models\n"
-                        f"wget https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
+                # Default to tinyllama and download it
+                model_info = self.RECOMMENDED_MODELS["tinyllama"]
+                model_path = models_dir / model_info["file"]
+                print(f"No model found. Downloading TinyLlama ({model_info['size_mb']} MB)...")
+                download_model(
+                    url=model_info["url"],
+                    dest=model_path,
+                    desc="Downloading tinyllama",
                     )
 
         if not model_path.exists():
