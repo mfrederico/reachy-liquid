@@ -328,11 +328,15 @@ def main():
                 while not barge_in_event.is_set():
                     if transcriber and recorder.check_barge_in_with_transcription(transcriber):
                         barge_in_event.set()
-                        player.stop()  # Immediately stop playback from monitor thread
+                        # For lite mode, safe to stop player from thread
+                        # For LFM2-Audio, let main thread handle it (CUDA safety)
+                        if args.lite:
+                            player.stop()
                         break
                     elif not transcriber and recorder.check_barge_in():
                         barge_in_event.set()
-                        player.stop()
+                        if args.lite:
+                            player.stop()
                         break
                     time_module.sleep(0.01)  # Check every 10ms
 
@@ -372,6 +376,7 @@ def main():
                 for audio_chunk in conversation.generate_response_streaming(audio_input):
                     if barge_in_event.is_set():
                         print("\n[Interrupted - words detected]")
+                        player.stop()  # Stop playback from main thread (CUDA safe)
                         interrupted = True
                         break
 
@@ -388,6 +393,11 @@ def main():
             if interrupted or barge_in:
                 # User interrupted - stop playback and record their speech
                 player.stop()
+
+                # Reset LFM2-Audio model state after interruption (CUDA graph gets corrupted)
+                if not args.lite and hasattr(conversation, 'reset'):
+                    conversation.reset()
+
                 audio_input = recorder.record_after_barge_in()
                 print()
             else:
