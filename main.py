@@ -348,6 +348,7 @@ def main():
             else:
                 # LFM2-Audio mode yields small chunks directly
                 # Note: LFM2-Audio does its own speech recognition, doesn't use user_text
+                import time as time_module
                 for audio_chunk in conversation.generate_response_streaming(audio_input):
                     player.play_chunk(audio_chunk)
                     chunk_count += 1
@@ -364,6 +365,9 @@ def main():
                         player.stop()
                         interrupted = True
                         break
+
+                    # Small delay to allow async transcription to complete
+                    time_module.sleep(0.02)  # 20ms
 
             # Stop monitoring
             barge_in = recorder.stop_barge_in_monitor()
