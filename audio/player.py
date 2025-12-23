@@ -9,6 +9,29 @@ import torch
 import config
 
 
+def find_supported_sample_rate(preferred: int = 24000) -> int:
+    """Find a sample rate the default output device supports.
+
+    Args:
+        preferred: Preferred sample rate
+
+    Returns:
+        Supported sample rate (preferred if supported, else fallback)
+    """
+    # Common sample rates in order of preference
+    candidates = [preferred, 48000, 44100, 22050, 16000]
+
+    for rate in candidates:
+        try:
+            sd.check_output_settings(samplerate=rate, channels=1)
+            return rate
+        except Exception:
+            continue
+
+    # Last resort: let sounddevice pick
+    return None
+
+
 class AudioPlayer:
     """Low-latency streaming audio player with robust buffering.
 
@@ -23,7 +46,16 @@ class AudioPlayer:
             prebuffer_seconds: Seconds of audio to buffer before starting playback
             buffer_seconds: Total buffer capacity in seconds
         """
-        self.sample_rate = config.OUTPUT_SAMPLE_RATE
+        # Find a sample rate the hardware supports
+        self.input_sample_rate = config.OUTPUT_SAMPLE_RATE  # What we receive
+        self.sample_rate = find_supported_sample_rate(self.input_sample_rate)
+
+        if self.sample_rate != self.input_sample_rate:
+            print(f"[Audio] Output device doesn't support {self.input_sample_rate}Hz, using {self.sample_rate}Hz")
+            self._needs_resample = True
+        else:
+            self._needs_resample = False
+
         self.prebuffer_samples = int(self.sample_rate * prebuffer_seconds)
         self.buffer_size = int(self.sample_rate * buffer_seconds)
 
@@ -67,6 +99,11 @@ class AudioPlayer:
         if audio.ndim > 1:
             audio = audio.squeeze()
         audio = self._normalize(audio)
+
+        # Resample if needed
+        if self._needs_resample:
+            audio = self._resample(audio, self.input_sample_rate, self.sample_rate)
+
         sd.play(audio, self.sample_rate)
         if blocking:
             sd.wait()
@@ -118,6 +155,16 @@ class AudioPlayer:
                 # Buffer empty - output silence (don't stop, stream is persistent)
                 outdata.fill(0)
 
+    def _resample(self, audio: np.ndarray, from_rate: int, to_rate: int) -> np.ndarray:
+        """Resample audio using linear interpolation (fast, good enough for speech)."""
+        if from_rate == to_rate:
+            return audio
+
+        ratio = to_rate / from_rate
+        new_length = int(len(audio) * ratio)
+        indices = np.linspace(0, len(audio) - 1, new_length)
+        return np.interp(indices, np.arange(len(audio)), audio).astype(np.float32)
+
     def play_chunk(self, chunk: np.ndarray | torch.Tensor):
         """Add a chunk to the buffer for streaming playback."""
         if isinstance(chunk, torch.Tensor):
@@ -126,6 +173,10 @@ class AudioPlayer:
             chunk = chunk.squeeze()
 
         chunk = self._normalize(chunk)
+
+        # Resample if hardware doesn't support input sample rate
+        if self._needs_resample:
+            chunk = self._resample(chunk, self.input_sample_rate, self.sample_rate)
 
         # Write to circular buffer using fast numpy ops
         with self._lock:
