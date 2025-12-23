@@ -1,0 +1,30 @@
+# Liquid Reachy - Lite Stack (Raspberry Pi 5)
+# Install with: pip install -r requirements-lite.txt
+
+# Audio I/O
+sounddevice>=0.4.6
+numpy>=1.24.0
+
+# Voice Activity Detection
+silero-vad>=5.0
+
+# Speech Recognition (ASR)
+openai-whisper>=20231117
+
+# Text-to-Speech
+piper-tts>=1.2.0
+
+# LLM (llama.cpp with OpenBLAS for better Pi 5 performance)
+# Install with: CMAKE_ARGS="-DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS" pip install llama-cpp-python
+llama-cpp-python>=0.2.0
+
+# Vision (optional)
+ultralytics>=8.0.0
+opencv-python>=4.8.0
+
+# Utilities
+psutil>=5.9.0  # For resource monitoring
+torchaudio>=2.0.0  # For audio resampling (optional, has fallback)
+
+# Note: torch is required but version depends on Pi 5 compatibility
+# Install separately: pip install torch --index-url https://download.pytorch.org/whl/cpu

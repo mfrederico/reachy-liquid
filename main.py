@@ -19,6 +19,30 @@ def main():
         description="Liquid Reachy - Conversational AI Companion"
     )
     parser.add_argument(
+        "--lite",
+        action="store_true",
+        help="Use lightweight stack for Pi 5: Whisper + LLM + Piper TTS (no LFM2-Audio)",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="tinyllama",
+        choices=["tinyllama", "qwen2-0.5b", "phi3-mini", "gemma-2b"],
+        help="LLM model for --lite mode (default: tinyllama)",
+    )
+    parser.add_argument(
+        "--model-path",
+        type=str,
+        help="Custom path to GGUF model file for --lite mode",
+    )
+    parser.add_argument(
+        "--tts-voice",
+        type=str,
+        default="amy",
+        choices=["amy", "lessac", "ryan", "arctic", "jenny", "alan"],
+        help="Piper TTS voice for --lite mode (default: amy)",
+    )
+    parser.add_argument(
         "--no-vision",
         action="store_true",
         help="Disable vision/camera",
@@ -28,7 +52,7 @@ def main():
         type=str,
         default=config.VOICE_PRESET,
         choices=list(config.VOICE_PRESETS.keys()),
-        help=f"Voice preset (default: {config.VOICE_PRESET})",
+        help=f"Voice preset for LFM2-Audio (default: {config.VOICE_PRESET})",
     )
     parser.add_argument(
         "--tools",
@@ -66,14 +90,22 @@ def main():
     print("=" * 50)
     print("  Liquid Reachy - AI Companion")
     print("=" * 50)
-    print(f"Device: {config.DEVICE}")
-    print(f"Voice: {args.voice}")
-    if args.tools == "keywords":
-        print(f"Tools: Keywords (Whisper {args.whisper})")
-    elif args.tools == "llm":
-        print("Tools: LFM2-Tool (LLM-based)")
-    if args.transcribe:
-        print(f"Transcription: Whisper {args.whisper}")
+
+    if args.lite:
+        print("Mode: LITE (Pi 5 compatible)")
+        print(f"LLM: {args.model}")
+        print(f"TTS: Piper ({args.tts_voice})")
+        print(f"ASR: Whisper {args.whisper}")
+    else:
+        print(f"Device: {config.DEVICE}")
+        print(f"Voice: {args.voice}")
+        if args.tools == "keywords":
+            print(f"Tools: Keywords (Whisper {args.whisper})")
+        elif args.tools == "llm":
+            print("Tools: LFM2-Tool (LLM-based)")
+        if args.transcribe:
+            print(f"Transcription: Whisper {args.whisper}")
+
     print(f"Audio prebuffer: {args.prebuffer}s")
     print()
 
@@ -132,12 +164,28 @@ def main():
 
     # Generate system prompt with capability awareness
     system_prompt = config.get_system_prompt(
-        voice_preset=args.voice,
+        voice_preset=args.voice if not args.lite else "neutral",
         has_camera=has_ptz,
-        has_tools=has_tools,
+        has_tools=has_tools or args.lite,  # Lite mode always has tools
     )
 
-    if args.tools == "llm":
+    if args.lite:
+        # Lightweight Pi 5 stack: Whisper + LLM + Piper TTS
+        from conversation import LiteConversationManager
+        conversation = LiteConversationManager(
+            system_prompt=system_prompt,
+            model_path=args.model_path,
+            model_name=args.model,
+            voice=args.tts_voice,
+            whisper_model=args.whisper,
+        )
+
+        # Always enable keyword tools in lite mode
+        from tools import KeywordToolMatcher
+        keyword_matcher = KeywordToolMatcher(camera=camera, detector=detector)
+        print("Keyword tools enabled (time, date" + (", PTZ" if has_ptz else "") + ")")
+
+    elif args.tools == "llm":
         # Full LLM-based tool calling (needs GPU + VRAM)
         from conversation import HybridModelManager
         conversation = HybridModelManager(
