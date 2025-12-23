@@ -24,7 +24,7 @@ class PiperTTS:
         >>> # audio is a numpy array at 22050 Hz
     """
 
-    # Default voice models (can be downloaded from HuggingFace)
+    # Default voice models with HuggingFace download URLs
     VOICES = {
         "amy": "en_US-amy-medium",
         "lessac": "en_US-lessac-medium",
@@ -33,6 +33,9 @@ class PiperTTS:
         "jenny": "en_GB-jenny_dioco-medium",
         "alan": "en_GB-alan-medium",
     }
+
+    # HuggingFace base URL for Piper voices
+    HF_BASE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main"
 
     def __init__(
         self,
@@ -67,6 +70,56 @@ class PiperTTS:
         except ImportError:
             print("Piper Python API not available, using CLI")
 
+    def _download_voice(self, model_path: Path, config_path: Path):
+        """Download voice model from HuggingFace."""
+        import urllib.request
+        import sys
+
+        # Parse model name to build URL path
+        # e.g., en_US-amy-medium -> en/en_US/amy/medium/en_US-amy-medium
+        parts = self.model_name.split("-")
+        if len(parts) >= 3:
+            lang_region = parts[0]  # en_US
+            lang = lang_region.split("_")[0]  # en
+            voice_name = parts[1]  # amy
+            quality = parts[2]  # medium
+
+            base_path = f"{lang}/{lang_region}/{voice_name}/{quality}/{self.model_name}"
+        else:
+            # Fallback: try direct path
+            base_path = self.model_name
+
+        model_url = f"{self.HF_BASE_URL}/{base_path}.onnx"
+        config_url = f"{self.HF_BASE_URL}/{base_path}.onnx.json"
+
+        self.model_dir.mkdir(parents=True, exist_ok=True)
+
+        def download_file(url: str, dest: Path, desc: str):
+            """Download with progress."""
+            def progress_hook(count, block_size, total_size):
+                if total_size > 0:
+                    percent = min(100, count * block_size * 100 // total_size)
+                    mb_done = count * block_size / (1024 * 1024)
+                    mb_total = total_size / (1024 * 1024)
+                    sys.stdout.write(f"\r{desc}: {percent}% ({mb_done:.1f}/{mb_total:.1f} MB)")
+                    sys.stdout.flush()
+
+            urllib.request.urlretrieve(url, dest, progress_hook)
+            print()  # Newline after progress
+
+        print(f"Downloading Piper voice: {self.model_name}")
+        try:
+            download_file(model_url, model_path, "Model")
+            download_file(config_url, config_path, "Config")
+            print(f"Voice downloaded to: {self.model_dir}")
+        except Exception as e:
+            # Clean up partial downloads
+            if model_path.exists():
+                model_path.unlink()
+            if config_path.exists():
+                config_path.unlink()
+            raise RuntimeError(f"Failed to download voice: {e}")
+
     def _load_voice(self):
         """Load voice model for Python API."""
         from piper.voice import PiperVoice
@@ -74,11 +127,9 @@ class PiperTTS:
         model_path = self.model_dir / f"{self.model_name}.onnx"
         config_path = self.model_dir / f"{self.model_name}.onnx.json"
 
+        # Auto-download if not found
         if not model_path.exists():
-            raise FileNotFoundError(
-                f"Model not found: {model_path}\n"
-                f"Download with: piper --download-model {self.model_name}"
-            )
+            self._download_voice(model_path, config_path)
 
         self._voice = PiperVoice.load(str(model_path), str(config_path))
 
