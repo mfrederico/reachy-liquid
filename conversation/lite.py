@@ -130,6 +130,75 @@ class LiteConversationManager:
         else:
             self._tool_context = None
 
+    def _normalize_time_for_tts(self, text: str) -> str:
+        """Convert time formats to spoken form."""
+        import re
+
+        def time_to_spoken(match):
+            hour = int(match.group(1))
+            minute = int(match.group(2))
+            second = match.group(3)  # May be None
+            period = match.group(4) or ""  # AM/PM
+
+            # Build spoken time
+            parts = []
+
+            # Hour
+            if hour == 0:
+                parts.append("twelve")
+            elif hour <= 12:
+                parts.append(str(hour))
+            else:
+                parts.append(str(hour - 12))
+
+            # Minutes
+            if minute == 0:
+                if not period:
+                    parts.append("o'clock")
+            elif minute < 10:
+                parts.append(f"oh {minute}")
+            else:
+                parts.append(str(minute))
+
+            # Skip seconds for speech (too verbose)
+
+            # AM/PM
+            if period:
+                parts.append(period.upper().replace(".", ""))
+
+            return " ".join(parts)
+
+        # Match times like 01:08:21 PM, 13:45, 1:30 AM
+        text = re.sub(
+            r"\b(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm|A\.M\.|P\.M\.)?",
+            time_to_spoken,
+            text
+        )
+
+        return text
+
+    def _clean_for_tts(self, text: str) -> str:
+        """Clean response text for TTS (remove role prefixes, normalize text)."""
+        import re
+
+        # Remove any single-word prefix followed by colon at start
+        # Catches: "Robot:", "A:", "Response:", "Assistant:", etc.
+        text = re.sub(r"^\s*\w+:\s*", "", text)
+
+        # Also remove bracketed prefixes like "[Billboard Baggins]"
+        text = re.sub(r"^\[[^\]]+\]\s*", "", text)
+
+        # Remove "responds/says" patterns
+        text = re.sub(r"^(responds?|says?)\s*:?\s*", "", text, flags=re.IGNORECASE)
+
+        # Remove "as per SYSTEM INFO" and similar
+        text = re.sub(r",?\s*as per (SYSTEM INFO|system info|the system)\.?", "", text, flags=re.IGNORECASE)
+
+        # Normalize times for natural speech
+        text = self._normalize_time_for_tts(text)
+
+        return text.strip()
+
     def _format_context(self) -> str:
         """Format vision and tool context as text."""
         parts = []
@@ -188,33 +257,70 @@ class LiteConversationManager:
         # Clear tool context after use
         self._tool_context = None
 
-        # Step 3: Generate LLM response
+        # Step 3: Generate LLM response with sentence-based TTS streaming
         self._ensure_llm()
         self._ensure_tts()
 
-        # Collect response text (for TTS)
-        # We stream text first, then synthesize audio
-        print("", end="", flush=True)  # Prepare for streaming output
+        import re
+        chunk_size = int(self.output_sample_rate * 0.1)  # 100ms audio chunks
 
         response_text = ""
-        for chunk in self._llm.generate_streaming(full_prompt):
-            print(chunk, end="", flush=True)
-            response_text += chunk
+        sentence_buffer = ""
+
+        def is_sentence_end(text: str) -> bool:
+            """Check if text ends with a sentence boundary (not a time colon)."""
+            text = text.rstrip()
+            if not text:
+                return False
+
+            # Must end with sentence punctuation
+            if text[-1] not in ".!?":
+                return False
+
+            # Make sure it's not an abbreviation like "Dr." or "Mr."
+            abbrevs = ["Mr.", "Mrs.", "Ms.", "Dr.", "Jr.", "Sr.", "vs.", "etc.", "e.g.", "i.e."]
+            for abbr in abbrevs:
+                if text.endswith(abbr):
+                    return False
+
+            return True
+
+        for token in self._llm.generate_streaming(full_prompt):
+            print(token, end="", flush=True)
+            response_text += token
+            sentence_buffer += token
+
+            # Check if we have a complete sentence
+            has_sentence = is_sentence_end(sentence_buffer)
+
+            if has_sentence:
+                # Extract complete sentence and synthesize
+                sentence = self._clean_for_tts(sentence_buffer.strip())
+                if sentence:
+                    audio = self._tts.synthesize(sentence)
+
+                    # Resample if needed
+                    if self._tts.sample_rate != self.output_sample_rate:
+                        audio = self._tts.resample_to(audio, self.output_sample_rate)
+
+                    # Yield complete sentence audio as one array
+                    # Caller handles pacing and barge-in between sentences
+                    yield audio
+
+                sentence_buffer = ""
 
         print()  # Newline after response
 
-        # Step 4: Synthesize audio from response
-        if response_text.strip():
-            audio = self._tts.synthesize(response_text)
+        # Synthesize any remaining text
+        if sentence_buffer.strip():
+            sentence = self._clean_for_tts(sentence_buffer.strip())
+            if sentence:
+                audio = self._tts.synthesize(sentence)
 
-            # Resample to output rate if needed
-            if self._tts.sample_rate != self.output_sample_rate:
-                audio = self._tts.resample_to(audio, self.output_sample_rate)
+                if self._tts.sample_rate != self.output_sample_rate:
+                    audio = self._tts.resample_to(audio, self.output_sample_rate)
 
-            # Yield in chunks for streaming playback
-            chunk_size = int(self.output_sample_rate * 0.1)  # 100ms chunks
-            for i in range(0, len(audio), chunk_size):
-                yield audio[i:i + chunk_size]
+                yield audio
 
         # Store for access after iteration
         self.last_text_response = response_text

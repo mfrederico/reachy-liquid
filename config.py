@@ -48,6 +48,25 @@ VOICE_PRESETS = {
 # Default voice preset
 VOICE_PRESET = "professional"
 
+# Simple system prompt for lite mode (small LLMs)
+def get_lite_system_prompt(has_camera: bool = False, has_tools: bool = False) -> str:
+    """Generate simple system prompt for small LLMs.
+
+    Args:
+        has_camera: Whether PTZ camera is available
+        has_tools: Whether keyword tools are enabled
+    """
+    prompt = "You are Lili, a helpful robot assistant. Give short, direct answers."
+
+    if has_tools:
+        prompt += " When given time/date info, state it clearly."
+
+    if has_camera:
+        prompt += " You can look around with your camera."
+
+    return prompt
+
+
 # System prompt template - includes voice description and capabilities
 def get_system_prompt(voice_preset: str = None, has_camera: bool = False, has_tools: bool = False) -> str:
     """Generate system prompt with voice description and capabilities.

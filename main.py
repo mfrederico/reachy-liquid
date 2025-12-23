@@ -164,11 +164,18 @@ def main():
     has_tools = args.tools == "keywords"
 
     # Generate system prompt with capability awareness
-    system_prompt = config.get_system_prompt(
-        voice_preset=args.voice if not args.lite else "neutral",
-        has_camera=has_ptz,
-        has_tools=has_tools or args.lite,  # Lite mode always has tools
-    )
+    if args.lite:
+        # Use simpler prompt for small LLMs
+        system_prompt = config.get_lite_system_prompt(
+            has_camera=has_ptz,
+            has_tools=True,  # Lite mode always has tools
+        )
+    else:
+        system_prompt = config.get_system_prompt(
+            voice_preset=args.voice,
+            has_camera=has_ptz,
+            has_tools=has_tools,
+        )
 
     if args.lite:
         # Lightweight Pi 5 stack: Whisper + LLM + Piper TTS
@@ -271,6 +278,22 @@ def main():
                 if user_text:
                     print(f"\nYou: {user_text}")
 
+                    # Check for stop/cancel commands - skip response entirely
+                    stop_words = ["stop", "cancel", "quiet", "shut up", "be quiet", "enough"]
+                    user_lower = user_text.lower().strip()
+                    # Remove punctuation and check if mostly stop words
+                    words_only = ''.join(c if c.isalnum() or c.isspace() else ' ' for c in user_lower).split()
+                    is_stop_command = (
+                        # Short command with stop word
+                        (any(word in user_lower for word in stop_words) and len(user_lower) < 50)
+                        # Or repeated stop words
+                        or (len(words_only) > 0 and all(w in stop_words for w in words_only))
+                    )
+                    if is_stop_command:
+                        print("[Acknowledged - stopping]")
+                        audio_input = None
+                        continue
+
             # Check for commands via keywords (if enabled)
             tool_results = []
             if keyword_matcher and user_text:
@@ -294,15 +317,45 @@ def main():
             chunk_count = 0
             interrupted = False
 
-            for audio_chunk in conversation.generate_response_streaming(audio_input, user_text=user_text):
-                player.play_chunk(audio_chunk)
-                chunk_count += 1
+            if args.lite:
+                # Lite mode yields complete sentence audio arrays
+                # Play each sentence with proper pacing and word-based barge-in
+                import time
+                chunk_size = int(config.SAMPLE_RATE * 0.1)  # 100ms chunks
 
-                # Check for barge-in
-                if recorder.check_barge_in():
-                    print("\n[Interrupted]")
-                    interrupted = True
-                    break
+                for sentence_audio in conversation.generate_response_streaming(audio_input, user_text=user_text):
+                    # Play this sentence in chunks at real-time rate
+                    for i in range(0, len(sentence_audio), chunk_size):
+                        chunk = sentence_audio[i:i + chunk_size]
+                        player.play_chunk(chunk)
+                        chunk_count += 1
+
+                        # Check for word-based barge-in (uses transcriber to confirm real speech)
+                        if transcriber and recorder.check_barge_in_with_transcription(transcriber):
+                            print("\n[Interrupted - words detected]")
+                            player.stop()  # Force stop playback immediately
+                            interrupted = True
+                            break
+
+                        # Pace playback to prevent buffer overflow
+                        time.sleep(0.05)
+
+                        if interrupted:
+                            break
+
+                    if interrupted:
+                        break
+            else:
+                # LFM2-Audio mode yields small chunks directly
+                for audio_chunk in conversation.generate_response_streaming(audio_input, user_text=user_text):
+                    player.play_chunk(audio_chunk)
+                    chunk_count += 1
+
+                    # Check for barge-in
+                    if recorder.check_barge_in():
+                        print("\n[Interrupted]")
+                        interrupted = True
+                        break
 
             # Stop monitoring
             barge_in = recorder.stop_barge_in_monitor()

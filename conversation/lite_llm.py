@@ -157,6 +157,20 @@ class LiteLLM:
 
         print(f"LLM loaded ({self.n_threads} threads, {self.n_ctx} context)")
 
+        # Try to get stop tokens from model metadata
+        try:
+            metadata = self._llm.metadata
+            if metadata:
+                # Look for EOS token and chat template info
+                eos_token = metadata.get("tokenizer.ggml.eos_token_id")
+                bos_token = metadata.get("tokenizer.ggml.bos_token_id")
+                chat_template = metadata.get("tokenizer.chat_template")
+                print(f"[Model] EOS: {eos_token}, BOS: {bos_token}")
+                if chat_template:
+                    print(f"[Model] Has chat template")
+        except Exception as e:
+            print(f"[Model] Could not read metadata: {e}")
+
     def set_system_prompt(self, prompt: str):
         """Set the system prompt.
 
@@ -175,10 +189,26 @@ class LiteLLM:
         """
         self._messages.append({"role": role, "content": content})
 
+    # Stop sequences by model family (prevent runaway generation)
+    MODEL_STOP_TOKENS = {
+        "tinyllama": ["</s>", "User:", "\nUser:", "Your capabilities"],
+        "qwen": ["<|im_end|>", "<|endoftext|>", "User:", "\nUser:"],
+        "smollm": ["<|im_end|>", "<|endoftext|>", "User:", "\nUser:"],
+        "default": ["User:", "\nUser:", "Human:", "\nHuman:", "Your capabilities"],
+    }
+
+    def _get_stop_sequences(self) -> list:
+        """Get stop sequences appropriate for the loaded model."""
+        model_name = (self._model_name or "").lower()
+        for key in self.MODEL_STOP_TOKENS:
+            if key in model_name:
+                return self.MODEL_STOP_TOKENS[key]
+        return self.MODEL_STOP_TOKENS["default"]
+
     def generate(
         self,
         prompt: str,
-        max_tokens: int = 256,
+        max_tokens: int = 150,
         temperature: float = 0.7,
         top_p: float = 0.9,
         stop: Optional[list] = None,
@@ -204,17 +234,26 @@ class LiteLLM:
         messages.extend(self._messages)
         messages.append({"role": "user", "content": prompt})
 
+        # Use model-specific stop sequences if none provided
+        stop_seqs = stop if stop is not None else self._get_stop_sequences()
+
         # Generate
         response = self._llm.create_chat_completion(
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
             top_p=top_p,
-            stop=stop,
+            stop=stop_seqs,
         )
 
         # Extract response text
         assistant_message = response["choices"][0]["message"]["content"]
+
+        # Clean up any leaked prompt patterns from response
+        for stop_seq in stop_seqs:
+            if stop_seq in assistant_message:
+                assistant_message = assistant_message.split(stop_seq)[0]
+        assistant_message = assistant_message.strip()
 
         # Update history
         self.add_message("user", prompt)
@@ -225,7 +264,7 @@ class LiteLLM:
     def generate_streaming(
         self,
         prompt: str,
-        max_tokens: int = 256,
+        max_tokens: int = 100,
         temperature: float = 0.7,
         top_p: float = 0.9,
         stop: Optional[list] = None,
@@ -251,6 +290,9 @@ class LiteLLM:
         messages.extend(self._messages)
         messages.append({"role": "user", "content": prompt})
 
+        # Use model-specific stop sequences if none provided
+        stop_seqs = stop if stop is not None else self._get_stop_sequences()
+
         # Generate with streaming
         full_response = ""
         for chunk in self._llm.create_chat_completion(
@@ -258,7 +300,7 @@ class LiteLLM:
             max_tokens=max_tokens,
             temperature=temperature,
             top_p=top_p,
-            stop=stop,
+            stop=stop_seqs,
             stream=True,
         ):
             delta = chunk["choices"][0]["delta"]
@@ -267,9 +309,14 @@ class LiteLLM:
                 full_response += text
                 yield text
 
+        # Clean up any leaked prompt patterns from response
+        for stop_seq in stop_seqs:
+            if stop_seq in full_response:
+                full_response = full_response.split(stop_seq)[0]
+
         # Update history
         self.add_message("user", prompt)
-        self.add_message("assistant", full_response)
+        self.add_message("assistant", full_response.strip())
 
     def reset(self):
         """Reset conversation history (keeps system prompt)."""

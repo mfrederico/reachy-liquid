@@ -278,7 +278,7 @@ class AudioRecorder:
 
     def check_barge_in(self) -> bool:
         """
-        Non-blocking check for barge-in.
+        Non-blocking check for barge-in (VAD-based).
 
         Returns:
             True if barge-in detected
@@ -312,6 +312,95 @@ class AudioRecorder:
                 if self._barge_in_detected.is_set():
                     self._captured_audio.append(chunk)
                 else:
+                    self._consecutive_speech = 0
+                    self._captured_audio = []
+
+        except Exception:
+            pass
+
+        return False
+
+    def check_barge_in_with_transcription(self, transcriber) -> bool:
+        """
+        Check for barge-in with word-based confirmation (async transcription).
+
+        Uses VAD for initial detection, runs Whisper in background thread.
+        Playback continues until real words are confirmed.
+
+        Args:
+            transcriber: Whisper transcriber instance
+
+        Returns:
+            True if barge-in with actual words detected
+        """
+        if not self._monitoring or self._stop_requested:
+            return False
+
+        # Honor the delay
+        if time.time() - self._monitor_start_time < self._delay:
+            return False
+
+        # Already confirmed
+        if self._barge_in_detected.is_set():
+            return True
+
+        # Check if background transcription completed
+        if hasattr(self, '_transcription_result') and self._transcription_result is not None:
+            text = self._transcription_result
+            self._transcription_result = None
+            self._transcription_pending = False
+
+            if text and len(text.strip()) > 0:
+                # Only interrupt for command words (avoids echo triggering barge-in)
+                interrupt_words = ["stop", "wait", "pause", "quiet", "hey", "hold on",
+                                   "excuse me", "listen", "hello", "shut up", "enough",
+                                   "cancel", "never mind", "okay stop"]
+                text_lower = text.lower()
+                is_command = any(word in text_lower for word in interrupt_words)
+
+                if is_command:
+                    self._barge_in_detected.set()
+                    self._barge_in_text = text  # Store for later use
+                    return True
+                else:
+                    # Not a command word - probably echo, ignore
+                    self._consecutive_speech = 0
+                    self._captured_audio = []
+            else:
+                # False positive - reset
+                self._consecutive_speech = 0
+
+        # Require enough speech to get a word (~128ms minimum)
+        required_consecutive = 4  # ~128ms of speech
+
+        try:
+            chunk = self._record_chunk()
+            if chunk is None:
+                return False
+
+            if self.vad.is_speech(chunk):
+                self._consecutive_speech += 1
+                self._captured_audio.append(chunk)
+
+                # Start background transcription when we have enough audio
+                if (self._consecutive_speech >= required_consecutive and
+                    not getattr(self, '_transcription_pending', False)):
+                    audio = np.concatenate(self._captured_audio)
+                    self._transcription_pending = True
+                    self._transcription_result = None
+
+                    # Run transcription in background thread
+                    def transcribe_async():
+                        try:
+                            result = transcriber.transcribe(audio, config.SAMPLE_RATE)
+                            self._transcription_result = result
+                        except Exception:
+                            self._transcription_result = ""
+
+                    thread = threading.Thread(target=transcribe_async, daemon=True)
+                    thread.start()
+            else:
+                if not self._barge_in_detected.is_set() and not getattr(self, '_transcription_pending', False):
                     self._consecutive_speech = 0
                     self._captured_audio = []
 
