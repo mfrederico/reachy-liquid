@@ -26,9 +26,9 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="tinyllama",
-        choices=["tinyllama", "qwen2-0.5b", "smollm2"],
-        help="LLM model for --lite mode (default: tinyllama). Auto-downloads if not present.",
+        default="smollm2",
+        choices=["smollm2-135m", "smollm2", "qwen2-0.5b", "tinyllama"],
+        help="LLM model for --lite mode (default: smollm2). smollm2-135m is fastest. Auto-downloads if not present.",
     )
     parser.add_argument(
         "--model-path",
