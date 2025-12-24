@@ -5,6 +5,7 @@ Much lighter than LFM2-Audio, suitable for edge devices.
 """
 
 import numpy as np
+import time
 from typing import Generator, Optional
 
 import config
@@ -240,9 +241,12 @@ class LiteConversationManager:
         # Step 1: Transcribe if needed (only if not already provided)
         if user_text is None:
             self._ensure_transcriber()
+            t_stt_start = time.perf_counter()
             user_text = self._transcriber.transcribe(audio_input, sample_rate)
+            t_stt_end = time.perf_counter()
             if user_text:
-                print(f"You: {user_text}")  # Only print if we did the transcription
+                print(f"\nYou: {user_text}")
+                print(f"[STT: {(t_stt_end - t_stt_start)*1000:.0f}ms]")
 
         if not user_text or not user_text.strip():
             return
@@ -266,6 +270,10 @@ class LiteConversationManager:
 
         response_text = ""
         sentence_buffer = ""
+        t_llm_start = time.perf_counter()
+        t_first_token = None
+        token_count = 0
+        tts_total_ms = 0
 
         def is_sentence_end(text: str) -> bool:
             """Check if text ends with a sentence boundary (not a time colon)."""
@@ -285,7 +293,11 @@ class LiteConversationManager:
 
             return True
 
+        print("A: ", end="", flush=True)
         for token in self._llm.generate_streaming(full_prompt):
+            if t_first_token is None:
+                t_first_token = time.perf_counter()
+            token_count += 1
             print(token, end="", flush=True)
             response_text += token
             sentence_buffer += token
@@ -297,7 +309,10 @@ class LiteConversationManager:
                 # Extract complete sentence and synthesize
                 sentence = self._clean_for_tts(sentence_buffer.strip())
                 if sentence:
+                    t_tts_start = time.perf_counter()
                     audio = self._tts.synthesize(sentence)
+                    t_tts_end = time.perf_counter()
+                    tts_total_ms += (t_tts_end - t_tts_start) * 1000
 
                     # Resample if needed
                     if self._tts.sample_rate != self.output_sample_rate:
@@ -309,13 +324,23 @@ class LiteConversationManager:
 
                 sentence_buffer = ""
 
+        t_llm_end = time.perf_counter()
         print()  # Newline after response
+
+        # Print timing metrics
+        llm_total_ms = (t_llm_end - t_llm_start) * 1000
+        first_token_ms = (t_first_token - t_llm_start) * 1000 if t_first_token else 0
+        print(f"[LLM: {llm_total_ms:.0f}ms total, {first_token_ms:.0f}ms to first token, {token_count} tokens]")
+        print(f"[TTS: {tts_total_ms:.0f}ms total]")
 
         # Synthesize any remaining text
         if sentence_buffer.strip():
             sentence = self._clean_for_tts(sentence_buffer.strip())
             if sentence:
+                t_tts_start = time.perf_counter()
                 audio = self._tts.synthesize(sentence)
+                t_tts_end = time.perf_counter()
+                print(f"[TTS remaining: {(t_tts_end - t_tts_start)*1000:.0f}ms]")
 
                 if self._tts.sample_rate != self.output_sample_rate:
                     audio = self._tts.resample_to(audio, self.output_sample_rate)
