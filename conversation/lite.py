@@ -312,7 +312,10 @@ class LiteConversationManager:
                     t_tts_start = time.perf_counter()
                     audio = self._tts.synthesize(sentence)
                     t_tts_end = time.perf_counter()
-                    tts_total_ms += (t_tts_end - t_tts_start) * 1000
+                    tts_ms = (t_tts_end - t_tts_start) * 1000
+                    tts_total_ms += tts_ms
+                    audio_duration_ms = len(audio) / self.output_sample_rate * 1000
+                    print(f"\n[TTS: {tts_ms:.0f}ms for {len(sentence)} chars, {audio_duration_ms:.0f}ms audio]", end="", flush=True)
 
                     # Resample if needed
                     if self._tts.sample_rate != self.output_sample_rate:
