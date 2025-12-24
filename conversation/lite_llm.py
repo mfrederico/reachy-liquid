@@ -47,10 +47,10 @@ class LiteLLM:
     # Recommended models for Pi CM4/Pi 5 with download URLs
     # Ordered by speed (fastest first)
     RECOMMENDED_MODELS = {
-        # Fastest - 135M params, very quick responses
+        # Fastest - 135M params, very quick responses (from QuantFactory - public)
         "smollm2-135m": {
-            "file": "smollm2-135m-instruct-q8_0.gguf",
-            "url": "https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct-GGUF/resolve/main/smollm2-135m-instruct-q8_0.gguf",
+            "file": "SmolLM2-135M-Instruct.Q8_0.gguf",
+            "url": "https://huggingface.co/QuantFactory/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct.Q8_0.gguf",
             "size_mb": 145,
         },
         # Fast - 360M params, good balance
