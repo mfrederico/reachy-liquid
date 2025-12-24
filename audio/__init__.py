@@ -1,7 +1,7 @@
 from .vad import VoiceActivityDetector
 from .recorder import AudioRecorder
 from .player import AudioPlayer
-from .transcriber import Transcriber, DummyTranscriber, create_transcriber
+from .transcriber import Transcriber, FasterTranscriber, DummyTranscriber, create_transcriber
 from .sounds import SoundEffects, play_processing, play_success, play_error, play_thinking
 from .tts import PiperTTS, create_tts
 
@@ -10,6 +10,7 @@ __all__ = [
     "AudioRecorder",
     "AudioPlayer",
     "Transcriber",
+    "FasterTranscriber",
     "DummyTranscriber",
     "create_transcriber",
     "SoundEffects",
