@@ -228,7 +228,7 @@ class LiteLLM:
     def generate(
         self,
         prompt: str,
-        max_tokens: int = 60,
+        max_tokens: int = 35,
         temperature: float = 0.7,
         top_p: float = 0.9,
         stop: Optional[list] = None,
@@ -284,7 +284,7 @@ class LiteLLM:
     def generate_streaming(
         self,
         prompt: str,
-        max_tokens: int = 60,
+        max_tokens: int = 35,
         temperature: float = 0.7,
         top_p: float = 0.9,
         stop: Optional[list] = None,
