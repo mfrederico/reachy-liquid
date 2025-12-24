@@ -39,8 +39,8 @@ def main():
         "--tts-voice",
         type=str,
         default="amy",
-        choices=["amy", "lessac", "ryan", "arctic", "jenny", "alan"],
-        help="Piper TTS voice for --lite mode (default: amy)",
+        choices=["amy-fast", "lessac-fast", "amy", "lessac", "ryan", "arctic", "jenny", "alan"],
+        help="Piper TTS voice for --lite mode (default: amy). Use *-fast for lower latency.",
     )
     parser.add_argument(
         "--no-vision",

@@ -25,7 +25,12 @@ class PiperTTS:
     """
 
     # Default voice models with HuggingFace download URLs
+    # "low" quality = faster, "medium" = better quality but slower
     VOICES = {
+        # Fast (low quality) - good for slow hardware
+        "amy-fast": "en_US-amy-low",
+        "lessac-fast": "en_US-lessac-low",
+        # Medium quality - better sound but slower
         "amy": "en_US-amy-medium",
         "lessac": "en_US-lessac-medium",
         "ryan": "en_US-ryan-medium",
