@@ -1,6 +1,7 @@
-"""Lightweight LLM using llama.cpp for Raspberry Pi 5.
+"""Lightweight LLM using llama.cpp for Raspberry Pi CM4/Pi 5.
 
 Uses llama-cpp-python bindings for efficient CPU inference.
+Optimized for limited RAM (4GB) and no GPU acceleration.
 """
 
 from pathlib import Path
@@ -43,32 +44,44 @@ class LiteLLM:
         >>> print(response)
     """
 
-    # Recommended models for Pi 5 with download URLs
+    # Recommended models for Pi CM4/Pi 5 with download URLs
+    # Ordered by speed (fastest first)
     RECOMMENDED_MODELS = {
-        "tinyllama": {
-            "file": "TinyLlama-1.1B-Chat-v1.0.Q4_K_M.gguf",
-            "url": "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
-            "size_mb": 669,
+        # Fastest - 135M params, very quick responses
+        "smollm2-135m": {
+            "file": "smollm2-135m-instruct-q8_0.gguf",
+            "url": "https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct-GGUF/resolve/main/smollm2-135m-instruct-q8_0.gguf",
+            "size_mb": 145,
         },
+        # Fast - 360M params, good balance
+        "smollm2": {
+            "file": "smollm2-360m-instruct-q8_0.gguf",
+            "url": "https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct-GGUF/resolve/main/smollm2-360m-instruct-q8_0.gguf",
+            "size_mb": 386,
+        },
+        # Medium - 500M params
         "qwen2-0.5b": {
             "file": "qwen2-0_5b-instruct-q4_k_m.gguf",
             "url": "https://huggingface.co/Qwen/Qwen2-0.5B-Instruct-GGUF/resolve/main/qwen2-0_5b-instruct-q4_k_m.gguf",
             "size_mb": 397,
         },
-        "smollm2": {
-            "file": "smollm2-360m-instruct-q8_0.gguf",
-            "url": "https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct-GGUF/resolve/main/smollm2-360m-instruct-q8_0.gguf",
-            "size_mb": 386,
+        # Slower - 1.1B params, best quality but slow on CM4
+        "tinyllama": {
+            "file": "TinyLlama-1.1B-Chat-v1.0.Q4_K_M.gguf",
+            "url": "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+            "size_mb": 669,
         },
     }
 
     def __init__(
         self,
         model_path: Optional[str] = None,
-        model_name: str = "tinyllama",
-        n_ctx: int = 2048,
-        n_threads: int = 4,
+        model_name: str = "smollm2",
+        n_ctx: int = 512,
+        n_threads: int = 3,
+        n_batch: int = 64,
         n_gpu_layers: int = 0,
+        use_mmap: bool = True,
         verbose: bool = False,
     ):
         """Initialize LiteLLM.
@@ -76,14 +89,18 @@ class LiteLLM:
         Args:
             model_path: Path to GGUF model file
             model_name: Preset model name if model_path not provided
-            n_ctx: Context window size
-            n_threads: Number of CPU threads (Pi 5 has 4 cores)
-            n_gpu_layers: GPU layers (0 for Pi 5, no GPU)
+            n_ctx: Context window size (512 for speed, 1024 for longer conversations)
+            n_threads: Number of CPU threads (3 optimal for CM4 thermals)
+            n_batch: Batch size for prompt processing (64 good for CM4)
+            n_gpu_layers: GPU layers (0 for CM4/Pi 5, no GPU)
+            use_mmap: Memory-map model file (faster loading, less RAM)
             verbose: Whether to print llama.cpp logs
         """
         self.n_ctx = n_ctx
         self.n_threads = n_threads
+        self.n_batch = n_batch
         self.n_gpu_layers = n_gpu_layers
+        self.use_mmap = use_mmap
         self.verbose = verbose
 
         self._llm = None
@@ -151,11 +168,13 @@ class LiteLLM:
             model_path=str(model_path),
             n_ctx=self.n_ctx,
             n_threads=self.n_threads,
+            n_batch=self.n_batch,
             n_gpu_layers=self.n_gpu_layers,
+            use_mmap=self.use_mmap,
             verbose=self.verbose,
         )
 
-        print(f"LLM loaded ({self.n_threads} threads, {self.n_ctx} context)")
+        print(f"LLM loaded ({self.n_threads} threads, {self.n_ctx} ctx, batch={self.n_batch})")
 
         # Try to get stop tokens from model metadata
         try:
@@ -193,6 +212,7 @@ class LiteLLM:
     MODEL_STOP_TOKENS = {
         "tinyllama": ["</s>", "User:", "\nUser:", "Your capabilities"],
         "qwen": ["<|im_end|>", "<|endoftext|>", "User:", "\nUser:"],
+        "smollm2-135m": ["<|im_end|>", "<|endoftext|>", "User:", "\nUser:"],
         "smollm": ["<|im_end|>", "<|endoftext|>", "User:", "\nUser:"],
         "default": ["User:", "\nUser:", "Human:", "\nHuman:", "Your capabilities"],
     }
@@ -208,7 +228,7 @@ class LiteLLM:
     def generate(
         self,
         prompt: str,
-        max_tokens: int = 150,
+        max_tokens: int = 60,
         temperature: float = 0.7,
         top_p: float = 0.9,
         stop: Optional[list] = None,
@@ -264,7 +284,7 @@ class LiteLLM:
     def generate_streaming(
         self,
         prompt: str,
-        max_tokens: int = 100,
+        max_tokens: int = 60,
         temperature: float = 0.7,
         top_p: float = 0.9,
         stop: Optional[list] = None,
