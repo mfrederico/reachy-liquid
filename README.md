@@ -1,6 +1,6 @@
 # Liquid Reachy
 
-A lightweight conversational AI companion for Raspberry Pi 5. Uses a pipeline of Whisper (ASR) + Small LLM + Piper TTS for voice conversations.
+A lightweight conversational AI companion for Reachy Mini. Uses a pipeline of Whisper (ASR) + Small LLM + Piper TTS for voice conversations.
 
 ## Setup
 
@@ -14,7 +14,7 @@ uv pip install -r requirements-lite.txt
 
 ### Note on llama-cpp-python
 
-For better performance on Pi 5, install with OpenBLAS:
+For better performance, install with OpenBLAS:
 
 ```bash
 CMAKE_ARGS="-DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS" uv pip install llama-cpp-python
@@ -34,7 +34,7 @@ The LLM model will auto-download on first run (~150-400MB depending on model cho
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--lite` | - | Use lightweight stack (required for Pi 5) |
+| `--lite` | - | Use lightweight stack (required for Reachy Mini) |
 | `--model` | `smollm2` | LLM model: `smollm2-135m`, `smollm2`, `qwen2-0.5b`, `tinyllama` |
 | `--model-path` | - | Custom path to GGUF model file |
 | `--tts-voice` | `amy` | Piper voice: `amy`, `lessac`, `ryan`, `arctic`, `jenny`, `alan` (add `-fast` for lower latency) |
